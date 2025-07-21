@@ -57,8 +57,6 @@ const UploadForm = () => {
       setSnackbarMessage(res.data.message);
       setSnackbarSeverity('success');
       setSnackbarOpen(true);
-
-      // Reset form fields
       setExcelFile(null);
       setImageFiles([]);
       setSubject('');
