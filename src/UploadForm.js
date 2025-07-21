@@ -14,6 +14,8 @@ import {
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import { useTheme } from '@mui/material/styles';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
 
 const UploadForm = () => {
   const [excelFile, setExcelFile] = useState(null);
@@ -34,6 +36,7 @@ const UploadForm = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
     if (!excelFile || !subject || !message) {
       alert('Please fill all required fields.');
       return;
@@ -41,22 +44,24 @@ const UploadForm = () => {
 
     const formData = new FormData();
     formData.append('excelFile', excelFile);
-    imageFiles.forEach((file) => {
-      formData.append('imageFiles', file);
-    });
+    imageFiles.forEach((file) => formData.append('imageFiles', file));
     formData.append('subject', subject);
-    formData.append('message', message);
+    formData.append('message', message); // HTML from ReactQuill
 
     setLoading(true);
 
     try {
-      const res = await axios.post('https://email-marketting-tool-1.onrender.com/send-emails', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const res = await axios.post(
+        'https://email-marketting-tool-1.onrender.com/send-emails',
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } }
+      );
 
       setSnackbarMessage(res.data.message);
       setSnackbarSeverity('success');
       setSnackbarOpen(true);
+
+      // Reset form
       setExcelFile(null);
       setImageFiles([]);
       setSubject('');
@@ -64,7 +69,7 @@ const UploadForm = () => {
       if (excelInputRef.current) excelInputRef.current.value = '';
       if (imageInputRef.current) imageInputRef.current.value = '';
     } catch (err) {
-      setSnackbarMessage(err.response?.data?.message || 'Failed to send emails. Please try again.');
+      setSnackbarMessage(err.response?.data?.message || 'Failed to send emails.');
       setSnackbarSeverity('error');
       setSnackbarOpen(true);
     } finally {
@@ -131,23 +136,21 @@ const UploadForm = () => {
               onChange={(e) => setSubject(e.target.value)}
               fullWidth
               required
-              label="Subject"
+              label="Email Subject"
               variant="outlined"
               sx={{ backgroundColor: '#fafafa' }}
             />
           </Box>
 
           <Box sx={{ mb: 3 }}>
-            <TextField
+            <Typography variant="subtitle1" sx={{ mb: 1 }}>
+              Message
+            </Typography>
+            <ReactQuill
               value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              fullWidth
-              required
-              label="Message"
-              variant="outlined"
-              multiline
-              rows={6}
-              sx={{ backgroundColor: '#fafafa' }}
+              onChange={setMessage}
+              theme="snow"
+              style={{ backgroundColor: '#fafafa', height: '200px' }}
             />
           </Box>
 
