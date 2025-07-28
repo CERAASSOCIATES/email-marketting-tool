@@ -11,7 +11,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Multer config
 const storage = multer.memoryStorage();
 const upload = multer({ storage }).fields([
   { name: 'excelFile', maxCount: 1 },
@@ -40,7 +39,6 @@ const hasMXRecord = async (email) => {
   }
 };
 
-// Helper: format message text into styled HTML
 function formatMessage(message) {
   if (!message) return '';
   const cleaned = message.replace(/(\n\s*){2,}/g, '\n');
@@ -48,7 +46,6 @@ function formatMessage(message) {
   return lines.map(line => `<p>${line}</p>`).join('');
 }
 
-// Main email route
 app.post('/send-emails', upload, async (req, res) => {
   try {
     const { subject, message } = req.body;
@@ -64,7 +61,6 @@ app.post('/send-emails', upload, async (req, res) => {
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const contactsRaw = xlsx.utils.sheet_to_json(sheet);
 
-    // Normalize keys to lowercase
     const contacts = contactsRaw.map(contact => {
       const normalized = {};
       for (const key in contact) {
@@ -105,14 +101,12 @@ app.post('/send-emails', upload, async (req, res) => {
         continue;
       }
 
-      // Replace placeholders
       let personalized = message
         .replace('{{name}}', contact.name || '')
         .replace('{{number}}', contact.number || '');
 
       let formattedMessage = formatMessage(personalized);
 
-      // Attachments
       const attachments = images.map((img, idx) => ({
         filename: img.originalname,
         content: img.buffer,
@@ -161,7 +155,6 @@ app.post('/send-emails', upload, async (req, res) => {
   }
 });
 
-// Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
