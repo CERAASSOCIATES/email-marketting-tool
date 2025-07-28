@@ -4,20 +4,20 @@ const xlsx = require('xlsx');
 const nodemailer = require('nodemailer');
 const cors = require('cors');
 const path = require('path');
+const dns = require('dns').promises;
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// File upload config
+// Multer config
 const storage = multer.memoryStorage();
 const upload = multer({ storage }).fields([
   { name: 'excelFile', maxCount: 1 },
   { name: 'imageFiles', maxCount: 10 }
 ]);
 
-// Routes
 app.get('/', (req, res) => {
   res.send('✅ Email Backend Server is running!');
 });
@@ -27,22 +27,28 @@ app.get('/download-excel', (req, res) => {
   res.download(filePath, 'contacts.xlsx');
 });
 
-// Helper: sanitize message, wrap plain lines in <p>, and replace multiple <br>
+// Email validation
+const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+const hasMXRecord = async (email) => {
+  try {
+    const domain = email.split('@')[1];
+    const records = await dns.resolveMx(domain);
+    return records && records.length > 0;
+  } catch {
+    return false;
+  }
+};
+
+// Helper: format message text into styled HTML
 function formatMessage(message) {
   if (!message) return '';
-
-  // Remove excessive blank lines and replace with single <br>
-  let cleaned = message.replace(/(\n\s*){2,}/g, '\n');
-
-  // Split by lines and wrap each line in <p>
+  const cleaned = message.replace(/(\n\s*){2,}/g, '\n');
   const lines = cleaned.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-
-  // Convert plain text lines to <p>
-  const wrapped = lines.map(line => `<p>${line}</p>`).join('');
-
-  return wrapped;
+  return lines.map(line => `<p>${line}</p>`).join('');
 }
 
+// Main email route
 app.post('/send-emails', upload, async (req, res) => {
   try {
     const { subject, message } = req.body;
@@ -54,12 +60,21 @@ app.post('/send-emails', upload, async (req, res) => {
     const excelBuffer = req.files['excelFile'][0].buffer;
     const images = req.files['imageFiles'] || [];
 
-    // Parse Excel contacts
     const workbook = xlsx.read(excelBuffer, { type: 'buffer' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const contacts = xlsx.utils.sheet_to_json(sheet);
+    const contactsRaw = xlsx.utils.sheet_to_json(sheet);
 
-    // Email transport
+    // Normalize keys to lowercase
+    const contacts = contactsRaw.map(contact => {
+      const normalized = {};
+      for (const key in contact) {
+        normalized[key.toLowerCase()] = contact[key];
+      }
+      return normalized;
+    });
+
+    console.log('Parsed contacts:', contacts);
+
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -68,7 +83,6 @@ app.post('/send-emails', upload, async (req, res) => {
       }
     });
 
-    // Base style to reduce spacing
     const baseStyle = `
       <style>
         body { font-family: Arial, sans-serif; font-size: 14px; }
@@ -79,59 +93,76 @@ app.post('/send-emails', upload, async (req, res) => {
       </style>
     `;
 
-    // Loop through contacts
+    const results = [];
+
     for (const contact of contacts) {
-      if (!contact.email) {
-        console.log('⚠️ Skipped contact with missing email:', contact);
+      const email = contact.email?.trim();
+      console.log(`Processing email: ${email}`);
+
+      if (!email || !isValidEmail(email) || !(await hasMXRecord(email))) {
+        console.log(`❌ Invalid or unreachable email: ${email}`);
+        results.push({ email: email || 'Unknown', status: 'Invalid Email' });
         continue;
       }
 
-      // Replace placeholders in raw message text first
-      let personalizedRaw = message
+      // Replace placeholders
+      let personalized = message
         .replace('{{name}}', contact.name || '')
         .replace('{{number}}', contact.number || '');
 
-      // Format the message: wrap lines in <p>
-      let formattedMessage = formatMessage(personalizedRaw);
+      let formattedMessage = formatMessage(personalized);
 
-      // Embed images
+      // Attachments
       const attachments = images.map((img, idx) => ({
         filename: img.originalname,
         content: img.buffer,
-        cid: `embedded-image-${idx}`
+        cid: `img-${idx}`
       }));
 
-      // Create image tags to replace {{image}} placeholder if present
-      const imageTags = attachments.map(att => `<img src="cid:${att.cid}" />`).join('');
-
-      // If the message includes {{image}}, replace it
+      const embeddedImages = attachments.map(att => `<img src="cid:${att.cid}" />`).join('');
       if (formattedMessage.includes('{{image}}')) {
-        formattedMessage = formattedMessage.replace('{{image}}', imageTags);
+        formattedMessage = formattedMessage.replace('{{image}}', embeddedImages);
       }
 
-      // Compose final html with base styles and formatted content
       const htmlContent = baseStyle + formattedMessage;
 
       const mailOptions = {
         from: process.env.GMAIL_USER,
-        to: contact.email,
+        to: email,
         subject,
         html: htmlContent,
         attachments
       };
 
-      await transporter.sendMail(mailOptions);
-      console.log(`✅ Email sent to: ${contact.email}`);
+      try {
+        await transporter.sendMail(mailOptions);
+        console.log(`✅ Email sent to: ${email}`);
+        results.push({ email, status: 'Sent' });
+      } catch (err) {
+        console.error(`❌ Failed to send to ${email}:`, err.message);
+        results.push({ email, status: 'Failed' });
+      }
     }
 
-    res.json({ message: 'Emails sent successfully!' });
+    console.log('Final results:', results);
+
+    const successEmails = results.filter(r => r.status === 'Sent').map(r => r.email);
+    const failedEmails = results.filter(r => r.status !== 'Sent').map(r => r.email);
+
+    return res.status(200).json({
+      results,
+      successEmails,
+      failedEmails
+    });
 
   } catch (error) {
-    console.error('❌ Email send error:', error.message);
-    res.status(500).json({ message: error.message || 'Failed to send emails.' });
+    console.error('❌ Server error:', error.message);
+    return res.status(500).json({ message: 'Internal Server Error' });
   }
 });
 
-app.listen(5000, () => {
-  console.log('🚀 Server running at http://localhost:5000');
+// Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
