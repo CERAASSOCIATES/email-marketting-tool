@@ -50,7 +50,7 @@ const UploadForm = () => {
 
     try {
       const res = await axios.post(
-        'http://localhost:5000/send-emails',
+        'https://email-marketting-tool-1.onrender.com/send-emails',
         formData,
         { headers: { 'Content-Type': 'multipart/form-data' } }
       );
